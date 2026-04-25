@@ -86,12 +86,17 @@ RUN set -e; \
     find . -type d -name '@img+sharp-win32-*'              -prune -exec rm -rf {} +; \
     true
 
-# Strip docs, tests, and TypeScript declaration/source-map files from prod modules.
+# Strip docs, tests, type declarations, source maps, and ESM duplicates of
+# runtime CJS code. `*.d.ts` is TypeScript-only — Node never reads it. The
+# `esm/` directories under `next/dist/` and `date-fns/` are ESM mirrors of the
+# CJS the seerr server actually loads via require().
 RUN set -e; \
     cd node_modules; \
-    find . \( -name '*.md' -o -name '*.markdown' -o -name '*.map' \) -type f -delete; \
+    find . \( -name '*.md' -o -name '*.markdown' -o -name '*.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \) -type f -delete; \
     find . -type d \( -name 'docs' -o -name 'doc' -o -name 'examples' -o -name 'example' -o -name '__tests__' -o -name 'test' -o -name 'tests' \) -prune -exec rm -rf {} +; \
     find . -type f \( -name 'CHANGELOG*' -o -name 'HISTORY*' -o -name 'AUTHORS' -o -name 'CONTRIBUTORS' -o -name '.travis.yml' -o -name '.eslintrc*' -o -name '.prettierrc*' -o -name 'tsconfig.json' \) -delete; \
+    find .pnpm -type d -path '*/next/dist/esm'      -prune -exec rm -rf {} +; \
+    find .pnpm -type d -path '*/date-fns/esm'       -prune -exec rm -rf {} +; \
     true
 
 # Drop transitive packages that pnpm keeps because their parent declared them as
