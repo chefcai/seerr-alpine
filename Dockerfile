@@ -94,6 +94,21 @@ RUN set -e; \
     find . -type f \( -name 'CHANGELOG*' -o -name 'HISTORY*' -o -name 'AUTHORS' -o -name 'CONTRIBUTORS' -o -name '.travis.yml' -o -name '.eslintrc*' -o -name '.prettierrc*' -o -name 'tsconfig.json' \) -delete; \
     true
 
+# Drop transitive packages that pnpm keeps because their parent declared them as
+# a runtime dep, but which are never reachable from a Node-based seerr server:
+#   - react-native + jsc-android + @react-native/* — RN is for mobile, not SSR.
+#   - typescript — only needed for `tsc` at build time; runtime is JS.
+# If any of these turn out to be loaded by a code path we hit (the container
+# would crash with MODULE_NOT_FOUND on startup), revert this stage.
+RUN set -e; \
+    cd node_modules/.pnpm; \
+    rm -rf react-native@* \
+           jsc-android@* \
+           @react-native+* \
+           react-devtools-core@* \
+           typescript@* ; \
+    true
+
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM alpine:3.22
 
