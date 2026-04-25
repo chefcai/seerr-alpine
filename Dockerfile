@@ -1,4 +1,4 @@
-# seer-alpine — multi-stage minimal build of seerr on Alpine Linux
+# seerr-alpine — multi-stage minimal build of seerr on Alpine Linux
 #
 # Pattern mirrors chefcai/jellyfin-alpine and chefcai/ttyd-alpine:
 #   - Build happens in GitHub Actions, not on squirttle's eMMC.

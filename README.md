@@ -1,4 +1,4 @@
-# seer-alpine
+# seerr-alpine
 
 A footprint-minimized Docker image for [seerr](https://github.com/seerr-team/seerr)
 (an Overseerr/Jellyseerr fork with built-in OIDC support), built on Alpine Linux.
@@ -14,9 +14,9 @@ host (`squirttle`) never holds intermediate build artifacts.
 | | Size | Δ vs upstream |
 |---|---:|---:|
 | `ghcr.io/seerr-team/seerr:preview-new-oidc` (upstream) | **1.36 GB** | — |
-| `ghcr.io/chefcai/seer-alpine:latest` | **590 MB** | **−57 % (−770 MB)** |
+| `ghcr.io/chefcai/seerr-alpine:latest` | **590 MB** | **−57 % (−770 MB)** |
 
-For perspective, that puts seer-alpine in the same weight class as
+For perspective, that puts seerr-alpine in the same weight class as
 `ghcr.io/chefcai/jellyfin-alpine:latest` (~600 MB).
 
 ## Why
@@ -66,8 +66,8 @@ none of the build-time weight.
 ## Image
 
 ```
-ghcr.io/chefcai/seer-alpine:latest
-ghcr.io/chefcai/seer-alpine:<seerr-commit-sha>   # 12-char short SHA
+ghcr.io/chefcai/seerr-alpine:latest
+ghcr.io/chefcai/seerr-alpine:<seerr-commit-sha>   # 12-char short SHA
 ```
 
 ## Usage
@@ -76,7 +76,7 @@ In `docker-compose.yml`:
 
 ```yaml
 seerr:
-  image: ghcr.io/chefcai/seer-alpine:latest
+  image: ghcr.io/chefcai/seerr-alpine:latest
   container_name: seerr
   init: true
   environment:
@@ -130,7 +130,7 @@ Both `SEERR_REF` and `SEERR_REPO` are build args:
 docker build \
   --build-arg SEERR_REF=main \
   --build-arg SEERR_REPO=https://github.com/Fallenbagel/jellyseerr.git \
-  -t my-seer-alpine .
+  -t my-seerr-alpine .
 ```
 
 (If you change the default `SEERR_REF`, also update the `git ls-remote` line

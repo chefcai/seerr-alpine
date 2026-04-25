@@ -1,4 +1,4 @@
-name: Build and Push seer-alpine Image
+name: Build and Push seerr-alpine Image
 
 on:
   push:
