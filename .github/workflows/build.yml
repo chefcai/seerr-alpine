@@ -33,10 +33,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get seerr commit SHA from upstream branch
+      - name: Get seerr commit SHA from upstream tag
         id: seerr_version
         run: |
-          REF=$(git ls-remote https://github.com/seerr-team/seerr.git refs/heads/preview-new-oidc | cut -f1 | head -c 12)
+          # preview-new-oidc is a TAG on upstream, not a branch — use the bare
+          # name so git ls-remote matches refs/tags/. (Initial naive
+          # 'refs/heads/preview-new-oidc' returned empty and broke SHA tagging.)
+          REF=$(git ls-remote https://github.com/seerr-team/seerr.git preview-new-oidc | awk 'NR==1{print substr($1,1,12)}')
+          if [ -z "$REF" ]; then
+            echo "::error::Could not resolve upstream seerr commit SHA for preview-new-oidc"
+            exit 1
+          fi
           echo "version=$REF" >> "$GITHUB_OUTPUT"
           echo "seerr commit: $REF"
 
