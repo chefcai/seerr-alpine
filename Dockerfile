@@ -28,8 +28,12 @@ RUN apk add --no-cache \
         libc6-compat \
     && corepack enable
 
-# Shallow-clone the source at the same ref the upstream image is built from.
-RUN git clone --depth 1 --branch "${SEERR_REF}" "${SEERR_REPO}" /build
+# Shallow-clone the source at the same ref the upstream image is built from,
+# then write committag.json from the cloned SHA — upstream's CI generates this
+# file at build time and the runtime references it for version display.
+RUN git clone --depth 1 --branch "${SEERR_REF}" "${SEERR_REPO}" /build \
+ && printf '{"commitTag": "%s"}\n' "$(git -C /build rev-parse HEAD)" > /build/committag.json \
+ && cat /build/committag.json
 
 # Full install (devDeps needed for `pnpm build`).
 RUN pnpm install --frozen-lockfile
