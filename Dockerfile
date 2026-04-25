@@ -39,7 +39,14 @@ RUN git clone --depth 1 --branch "${SEERR_REF}" "${SEERR_REPO}" /build \
 RUN pnpm install --frozen-lockfile
 
 # Build server (tsc -> dist/) + next (.next/).
-RUN pnpm build \
+#
+# COMMIT_TAG must be exported into the build env: next.config.js reads
+# `process.env.COMMIT_TAG || 'local'` and bakes that string into the SPA bundle.
+# Without this, the SPA ships with `commitTag: "local"` while the runtime
+# server reads the real SHA from committag.json — the mismatch fires
+# Jellyseerr's "Updated, please reload" banner in an infinite loop.
+# Reuse the JSON file we wrote above so we don't re-shell-out to git here.
+RUN COMMIT_TAG=$(node -p "require('./committag.json').commitTag") pnpm build \
  && rm -rf .next/cache
 
 # Wipe node_modules and re-install from scratch with --prod so the pnpm
