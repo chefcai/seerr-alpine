@@ -9,6 +9,30 @@ Same pattern as [`chefcai/jellyfin-alpine`](https://github.com/chefcai/jellyfin-
 assembled in GitHub Actions and published to `ghcr.io`, so the eMMC-bound homelab
 host (`squirttle`) never holds intermediate build artifacts.
 
+## Upstream tracking
+
+This image tracks the **`preview-new-oidc`** branch of
+[`seerr-team/seerr`](https://github.com/seerr-team/seerr), not `main`. That
+branch is where the project is staging its built-in OIDC (OpenID Connect)
+authentication support — at the time of writing, OIDC has not yet been merged
+into mainline. Tracking `preview-new-oidc` is how the homelab gets a working
+OIDC-capable seerr today, ahead of the upstream release.
+
+**When OIDC merges into upstream `main`, this build should pivot to `main`.**
+Two places need updating in lockstep:
+
+1. `Dockerfile` — change the `ARG SEERR_REF=preview-new-oidc` default to
+   `ARG SEERR_REF=main`.
+2. `.github/workflows/build.yml` — update the `git ls-remote …
+   preview-new-oidc` line (in the *Get seerr commit SHA from upstream tag*
+   step) so the daily skip-check resolves `main` instead. Also update the
+   `cron`/`concurrency` comments that reference `preview-new-oidc` for
+   accuracy.
+
+After the pivot, the image's runtime entrypoint (`node dist/index.js`), the
+shrink approach, and the `chefcai/seerr-alpine` package name all stay the same
+— consumers don't need to change anything.
+
 ## Result
 
 | | Size | Δ vs upstream |
