@@ -38,8 +38,10 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
 # Strip devDeps and the next.js build cache.
-RUN pnpm prune --prod \
- && pnpm store prune \
+# `--ignore-scripts` is required: seerr's `prepare` lifecycle (`node bin/prepare.js`)
+# does `require('husky')`, which would crash mid-prune since husky is a devDep
+# being removed.
+RUN pnpm prune --prod --ignore-scripts \
  && rm -rf .next/cache
 
 # Drop platform-specific prebuilds we don't need on a Linux/musl runtime.
