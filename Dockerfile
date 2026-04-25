@@ -39,32 +39,63 @@ RUN git clone --depth 1 --branch "${SEERR_REF}" "${SEERR_REPO}" /build \
 RUN pnpm install --frozen-lockfile
 
 # Build server (tsc -> dist/) + next (.next/).
-RUN pnpm build
-
-# Strip devDeps and the next.js build cache.
-# `--ignore-scripts` is required: seerr's `prepare` lifecycle (`node bin/prepare.js`)
-# does `require('husky')`, which would crash mid-prune since husky is a devDep
-# being removed.
-RUN pnpm prune --prod --ignore-scripts \
+RUN pnpm build \
  && rm -rf .next/cache
 
-# Drop platform-specific prebuilds we don't need on a Linux/musl runtime.
-RUN find node_modules -type d \( \
-        -path '*/prebuilds/darwin-*' -o \
-        -path '*/prebuilds/win32-*'  -o \
-        -path '*/prebuilds/linux-arm*' -o \
-        -path '*/prebuilds/linux-x64-glibc*' \
-    \) -prune -exec rm -rf {} + 2>/dev/null || true \
- && find node_modules -type d -name '@next+swc-linux-x64-gnu*' -prune -exec rm -rf {} + 2>/dev/null || true
+# Wipe node_modules and re-install from scratch with --prod so the pnpm
+# content-addressable store ONLY contains packages reachable from the prod tree.
+# `pnpm prune --prod` alone doesn't shrink .pnpm enough — it leaves transitive
+# devDeps (typescript, swc/core-gnu, react-native, jsc-android, three, ace-builds,
+# react-devtools, etc.) in the store even after pruning the symlinks.
+# `--ignore-scripts` skips seerr's `prepare` hook (which requires devDep `husky`).
+RUN rm -rf node_modules \
+ && pnpm install --prod --frozen-lockfile --ignore-scripts
+
+# Drop prebuilds and arch-specific binaries we don't need on linux/musl/x64.
+RUN set -e; \
+    cd node_modules; \
+    # Native module prebuilds for other OS/arch.
+    find . -type d \( \
+        -path '*/prebuilds/darwin-*'           -o \
+        -path '*/prebuilds/win32-*'            -o \
+        -path '*/prebuilds/linux-arm*'         -o \
+        -path '*/prebuilds/linux-x64-glibc*'   -o \
+        -path '*/prebuilds/android-*' \
+    \) -prune -exec rm -rf {} +; \
+    # next-swc and @swc/core: keep musl-x64 only.
+    find . -type d -name '@next+swc-linux-x64-gnu*'        -prune -exec rm -rf {} +; \
+    find . -type d -name '@next+swc-linux-arm*'            -prune -exec rm -rf {} +; \
+    find . -type d -name '@next+swc-darwin-*'              -prune -exec rm -rf {} +; \
+    find . -type d -name '@next+swc-win32-*'               -prune -exec rm -rf {} +; \
+    find . -type d -name '@swc+core-linux-x64-gnu*'        -prune -exec rm -rf {} +; \
+    find . -type d -name '@swc+core-linux-arm*'            -prune -exec rm -rf {} +; \
+    find . -type d -name '@swc+core-darwin-*'              -prune -exec rm -rf {} +; \
+    find . -type d -name '@swc+core-win32-*'               -prune -exec rm -rf {} +; \
+    # sharp libvips: keep musl-x64 only.
+    find . -type d -name '@img+sharp-libvips-linux-x64*'   -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-libvips-linux-arm*'   -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-libvips-darwin-*'     -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-linux-x64*'           -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-linux-arm*'           -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-darwin-*'             -prune -exec rm -rf {} +; \
+    find . -type d -name '@img+sharp-win32-*'              -prune -exec rm -rf {} +; \
+    true
+
+# Strip docs, tests, and TypeScript declaration/source-map files from prod modules.
+RUN set -e; \
+    cd node_modules; \
+    find . \( -name '*.md' -o -name '*.markdown' -o -name '*.map' \) -type f -delete; \
+    find . -type d \( -name 'docs' -o -name 'doc' -o -name 'examples' -o -name 'example' -o -name '__tests__' -o -name 'test' -o -name 'tests' \) -prune -exec rm -rf {} +; \
+    find . -type f \( -name 'CHANGELOG*' -o -name 'HISTORY*' -o -name 'AUTHORS' -o -name 'CONTRIBUTORS' -o -name '.travis.yml' -o -name '.eslintrc*' -o -name '.prettierrc*' -o -name 'tsconfig.json' \) -delete; \
+    true
 
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM alpine:3.22
 
 # nodejs-current = v22.x in alpine 3.22 (matches the builder).
-# tini for PID 1, tzdata so TZ env behaves.
+# tzdata so TZ env behaves. PID 1 is provided by docker compose `init: true`.
 RUN apk add --no-cache \
         nodejs-current \
-        tini \
         tzdata \
     && addgroup -g 13000 seerr \
     && adduser -D -u 13001 -G seerr seerr
@@ -79,6 +110,7 @@ COPY --from=builder --chown=seerr:seerr /build/node_modules   ./node_modules
 COPY --from=builder --chown=seerr:seerr /build/package.json   ./package.json
 COPY --from=builder --chown=seerr:seerr /build/next.config.js ./next.config.js
 COPY --from=builder --chown=seerr:seerr /build/committag.json ./committag.json
+COPY --from=builder --chown=seerr:seerr /build/seerr-api.yml  ./seerr-api.yml
 
 # Config dir — bind-mounted at runtime.
 RUN mkdir -p /app/config && chown -R seerr:seerr /app/config
@@ -87,5 +119,4 @@ USER seerr
 EXPOSE 5055
 ENV NODE_ENV=production
 
-ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/index.js"]
