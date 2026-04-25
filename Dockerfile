@@ -109,6 +109,24 @@ RUN set -e; \
            typescript@* ; \
     true
 
+# Iter 7: more dead weight that survives a clean prod install.
+#   - ace-builds (57M): code editor only used in seerr's notification-template
+#     settings UI. The server boots and runs without it; the page that needs it
+#     would 404 on the asset, not crash the process.
+#   - @swc/core-linux-x64-musl (60M): SWC compiler used by Next.js at build
+#     time. Runtime SSR uses precompiled bundles via @next/swc-linux-x64-musl
+#     (the 150M neighbor we keep), not @swc/core directly.
+#   - @formatjs/intl-displaynames@6.6.8 (31M): older duplicate; the newer
+#     6.8.13 is the version actually imported by seerr's i18n setup. The 6.6.8
+#     copy is only kept by pnpm to satisfy a peer-dep range from a transitive
+#     package that doesn't actually load it at runtime.
+RUN set -e; \
+    cd node_modules/.pnpm; \
+    rm -rf ace-builds@* \
+           @swc+core-linux-x64-musl@* \
+           @formatjs+intl-displaynames@6.6.8 ; \
+    true
+
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM alpine:3.22
 
