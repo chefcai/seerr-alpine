@@ -137,11 +137,17 @@ FROM alpine:3.22
 
 # nodejs-current = v22.x in alpine 3.22 (matches the builder).
 # tzdata so TZ env behaves. PID 1 is provided by docker compose `init: true`.
+#
+# Runtime user is UID 1000 / GID 1000 to match upstream ghcr.io/seerr-team/seerr,
+# which runs as the `node` user from node:*-alpine (UID 1000). The existing
+# /home/haadmin/config/seerr-config/ tree on squirttle is owned by 1000:1000;
+# matching that here lets the alpine image be a drop-in replacement for the
+# upstream image without any host-side chown.
 RUN apk add --no-cache \
         nodejs-current \
         tzdata \
-    && addgroup -g 13000 seerr \
-    && adduser -D -u 13001 -G seerr seerr
+    && addgroup -g 1000 seerr \
+    && adduser -D -u 1000 -G seerr seerr
 
 WORKDIR /app
 
