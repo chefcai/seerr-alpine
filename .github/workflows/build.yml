@@ -4,10 +4,23 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+  schedule:
+    # Daily at 06:45 UTC (staggered 45 min after bazarr-alpine, 30 after
+    # jellyfin-alpine, 15 after ttyd-alpine). Skips automatically if upstream
+    # seerr commit is already published — see "Check if image already exists".
+    - cron: '45 6 * * *'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+# Serialize runs on this ref. If a second run is queued for the same ref while
+# one is in flight, the older still-in-flight run gets cancelled — prevents the
+# parallel-push race where a slower-finishing build overwrites :latest with
+# stale bits (which happened on 2026-04-25 between iter 9 and iter 10).
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-push:
@@ -20,14 +33,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get seerr commit tag from upstream branch
+      - name: Get seerr commit SHA from upstream branch
         id: seerr_version
         run: |
           REF=$(git ls-remote https://github.com/seerr-team/seerr.git refs/heads/preview-new-oidc | cut -f1 | head -c 12)
           echo "version=$REF" >> "$GITHUB_OUTPUT"
           echo "seerr commit: $REF"
 
+      - name: Check if image already exists for this version
+        id: check
+        run: |
+          VERSION="${{ steps.seerr_version.outputs.version }}"
+          TOKEN=$(curl -fsSL "https://ghcr.io/token?scope=repository:${{ github.repository }}:pull" | jq -r .token)
+          HTTP=$(curl -sSL -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/${{ github.repository }}/manifests/$VERSION")
+          if [ "$HTTP" = "200" ]; then
+            echo "needs_build=false" >> $GITHUB_OUTPUT
+            echo "::notice::Upstream seerr commit $VERSION already published — skipping build."
+          else
+            echo "needs_build=true" >> $GITHUB_OUTPUT
+            echo "::notice::Upstream seerr commit $VERSION not yet published (HTTP $HTTP) — will build."
+          fi
+
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -35,6 +67,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata for Docker
+        if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -44,9 +77,11 @@ jobs:
             type=raw,value=${{ steps.seerr_version.outputs.version }}
 
       - name: Set up Docker Buildx
+        if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
+        if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
