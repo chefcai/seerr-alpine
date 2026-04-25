@@ -47,9 +47,14 @@ RUN pnpm build \
 # `pnpm prune --prod` alone doesn't shrink .pnpm enough — it leaves transitive
 # devDeps (typescript, swc/core-gnu, react-native, jsc-android, three, ace-builds,
 # react-devtools, etc.) in the store even after pruning the symlinks.
-# `--ignore-scripts` skips seerr's `prepare` hook (which requires devDep `husky`).
+#
+# `--ignore-scripts` skips seerr's `prepare` hook (which requires devDep `husky`),
+# but it also skips native module install scripts. So we explicitly rebuild the
+# native deps we know the runtime needs (sqlite3 via typeorm, bcrypt for auth,
+# sharp for next/image) so their .node binaries are present.
 RUN rm -rf node_modules \
- && pnpm install --prod --frozen-lockfile --ignore-scripts
+ && pnpm install --prod --frozen-lockfile --ignore-scripts \
+ && pnpm rebuild sqlite3 bcrypt sharp
 
 # Drop prebuilds and arch-specific binaries we don't need on linux/musl/x64.
 RUN set -e; \
