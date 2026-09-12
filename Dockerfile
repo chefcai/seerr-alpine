@@ -47,7 +47,7 @@ RUN pnpm install --frozen-lockfile
 
 # Build server (tsc -> dist/) + next (.next/).
 #
-# COMMIT_TAG must be exported into the build env: next.config.js reads
+# COMMIT_TAG must be exported into the build env: next.config.ts reads
 # `process.env.COMMIT_TAG || 'local'` and bakes that string into the SPA bundle.
 # Without this, the SPA ships with `commitTag: "local"` while the runtime
 # server reads the real SHA from committag.json — the mismatch fires
@@ -171,7 +171,7 @@ COPY --from=builder --chown=seerr:seerr /build/.next          ./.next
 COPY --from=builder --chown=seerr:seerr /build/public         ./public
 COPY --from=builder --chown=seerr:seerr /build/node_modules   ./node_modules
 COPY --from=builder --chown=seerr:seerr /build/package.json   ./package.json
-COPY --from=builder --chown=seerr:seerr /build/next.config.js ./next.config.js
+COPY --from=builder --chown=seerr:seerr /build/next.config.ts ./next.config.ts
 COPY --from=builder --chown=seerr:seerr /build/committag.json ./committag.json
 COPY --from=builder --chown=seerr:seerr /build/seerr-api.yml  ./seerr-api.yml
 
