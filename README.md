@@ -6,8 +6,8 @@ A footprint-minimized Docker image for [seerr](https://github.com/seerr-team/see
 Same pattern as [`chefcai/jellyfin-alpine`](https://github.com/chefcai/jellyfin-alpine),
 [`chefcai/ttyd-alpine`](https://github.com/chefcai/ttyd-alpine), and
 [`chefcai/bazarr-alpine`](https://github.com/chefcai/bazarr-alpine): the image is
-assembled in GitHub Actions and published to `ghcr.io`, so the eMMC-bound homelab
-host (`squirttle`) never holds intermediate build artifacts.
+assembled in GitHub Actions and published to `ghcr.io`, so small/resource-constrained
+homelab hosts never hold intermediate build artifacts.
 
 ## Upstream tracking
 
@@ -45,7 +45,7 @@ For perspective, that puts seerr-alpine in the same weight class as
 
 ## Why
 
-`squirttle` is a Wyse 5020 with only ~12 GB of eMMC and no expansion path. The
+Many homelab hosts run with a small amount of storage and no expansion path. The
 upstream image ships a lot that doesn't run at runtime:
 
 - the full source tree (`src/`, `server/`, `cypress.config.ts`, …)
@@ -104,11 +104,11 @@ seerr:
   container_name: seerr
   init: true
   environment:
-    - TZ=America/New_York
+    - TZ=UTC  # override to your local zone
   ports:
     - "5055:5055"
   volumes:
-    - /home/haadmin/config/seerr-config:/app/config
+    - /path/to/seerr-config:/app/config
   restart: unless-stopped
   healthcheck:
     test: wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/status || exit 1
@@ -118,11 +118,12 @@ seerr:
     start_period: 30s
 ```
 
-The bind-mounted `/app/config` directory must be owned by **UID 13001 / GID
-13000** (the homelab convention). On a host where it isn't:
+The bind-mounted `/app/config` directory must be owned by whatever UID/GID
+you pass via `PUID`/`PGID` (default **1000:1000** if unset). On a host where
+it isn't:
 
 ```bash
-sudo chown -R 13001:13000 /home/haadmin/config/seerr-config
+sudo chown -R 1000:1000 /path/to/seerr-config
 ```
 
 ## Build pipeline

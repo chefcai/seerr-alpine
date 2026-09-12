@@ -1,7 +1,7 @@
 # seerr-alpine — multi-stage minimal build of seerr on Alpine Linux
 #
 # Pattern mirrors chefcai/jellyfin-alpine and chefcai/ttyd-alpine:
-#   - Build happens in GitHub Actions, not on squirttle's eMMC.
+#   - Build happens in GitHub Actions, not on the deploying host.
 #   - Final image is alpine + nodejs-current + only the runtime artifacts
 #     needed by `node dist/index.js`.
 #
@@ -28,10 +28,17 @@ RUN apk add --no-cache \
         libc6-compat \
     && corepack enable
 
-# Shallow-clone the source at the same ref the upstream image is built from,
-# then write committag.json from the cloned SHA — upstream's CI generates this
-# file at build time and the runtime references it for version display.
-RUN git clone --depth 1 --branch "${SEERR_REF}" "${SEERR_REPO}" /build \
+# Fetch the exact resolved ref -- a full commit SHA passed in from CI, or a
+# branch/tag name for local/manual builds -- rather than re-resolving a
+# possibly-moved tag at build time. `preview-new-oidc` is a tag upstream
+# force-moves as they iterate, so re-resolving it here (instead of using
+# the SHA the workflow already resolved for tagging) risked a tag/content
+# mismatch if it moved between the two steps. See
+# https://github.com/chefcai/seerr-alpine/issues/3
+RUN git init -q /build \
+ && git -C /build remote add origin "${SEERR_REPO}" \
+ && git -C /build fetch --depth 1 origin "${SEERR_REF}" \
+ && git -C /build checkout -q FETCH_HEAD \
  && printf '{"commitTag": "%s"}\n' "$(git -C /build rev-parse HEAD)" > /build/committag.json \
  && cat /build/committag.json
 
@@ -145,12 +152,14 @@ FROM alpine:3.22
 # nodejs-current = v22.x in alpine 3.22 (matches the builder).
 # tzdata so TZ env behaves. PID 1 is provided by docker compose `init: true`.
 #
-# Runtime UID/GID = 13001/13000 — the homelab-wide convention used by sonarr,
-# radarr, jellyfin, etc. (PUID/PGID env on linuxserver.io images). All bind-
-# mounted config/data directories on squirttle are owned by this UID/GID.
+# UID/GID 13001:13000 by default at build time (homelab-wide convention used
+# by sonarr, radarr, jellyfin, etc.) -- fully overridable at runtime via the
+# PUID/PGID env vars, see entrypoint.sh and
+# https://github.com/chefcai/seerr-alpine/issues/1
 RUN apk add --no-cache \
         nodejs-current \
         tzdata \
+        su-exec \
     && addgroup -g 13000 seerr \
     && adduser -D -u 13001 -G seerr seerr
 
@@ -169,8 +178,14 @@ COPY --from=builder --chown=seerr:seerr /build/seerr-api.yml  ./seerr-api.yml
 # Config dir — bind-mounted at runtime.
 RUN mkdir -p /app/config && chown -R seerr:seerr /app/config
 
-USER seerr
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# NOTE: intentionally stays as root here -- entrypoint.sh drops to
+# PUID:PGID (default 1000:1000) via su-exec at container start. See
+# https://github.com/chefcai/seerr-alpine/issues/1
 EXPOSE 5055
 ENV NODE_ENV=production
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "dist/index.js"]
