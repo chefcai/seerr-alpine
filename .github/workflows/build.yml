@@ -3,6 +3,8 @@ name: Build and Push seerr-alpine Image
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
   schedule:
     # Daily at 06:45 UTC (staggered 45 min after bazarr-alpine, 30 after
@@ -39,13 +41,17 @@ jobs:
           # preview-new-oidc is a TAG on upstream, not a branch — use the bare
           # name so git ls-remote matches refs/tags/. (Initial naive
           # 'refs/heads/preview-new-oidc' returned empty and broke SHA tagging.)
-          REF=$(git ls-remote https://github.com/seerr-team/seerr.git preview-new-oidc | awk 'NR==1{print substr($1,1,12)}')
-          if [ -z "$REF" ]; then
+          FULL_SHA=$(git ls-remote https://github.com/seerr-team/seerr.git preview-new-oidc | awk 'NR==1{print $1}')
+          if [ -z "$FULL_SHA" ]; then
             echo "::error::Could not resolve upstream seerr commit SHA for preview-new-oidc"
             exit 1
           fi
+          REF=$(echo "$FULL_SHA" | cut -c1-12)
           echo "version=$REF" >> "$GITHUB_OUTPUT"
-          echo "seerr commit: $REF"
+          # Full SHA is what actually gets built (see Dockerfile issue #3) --
+          # the short $REF above is kept only for image tagging.
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "seerr commit: $REF (full: $FULL_SHA)"
 
       - name: Check if image already exists for this version
         id: check
@@ -93,7 +99,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            SEERR_REF=${{ steps.seerr_version.outputs.full_sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
