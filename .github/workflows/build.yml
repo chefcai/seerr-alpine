@@ -3,6 +3,8 @@ name: Build and Push seerr-alpine Image
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
   schedule:
     # Daily at 06:45 UTC (staggered 45 min after bazarr-alpine, 30 after
@@ -97,7 +99,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           build-args: |
             SEERR_REF=${{ steps.seerr_version.outputs.full_sha }}
           tags: ${{ steps.meta.outputs.tags }}
