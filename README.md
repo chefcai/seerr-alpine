@@ -38,10 +38,17 @@ shrink approach, and the `chefcai/seerr-alpine` package name all stay the same
 | | Size | Δ vs upstream |
 |---|---:|---:|
 | `ghcr.io/seerr-team/seerr:preview-new-oidc` (upstream) | **1.36 GB** | — |
-| `ghcr.io/chefcai/seerr-alpine:latest` | **590 MB** | **−57 % (−770 MB)** |
+| `ghcr.io/chefcai/seerr-alpine` (before iter 8) | **490 MB** | **−64 % (−870 MB)** |
+| `ghcr.io/chefcai/seerr-alpine:latest` (iter 8) | **354 MB** | **−74 % (−1.0 GB)** |
 
-For perspective, that puts seerr-alpine in the same weight class as
-`ghcr.io/chefcai/jellyfin-alpine:latest` (~600 MB).
+Iter 8 (compressed 138.9 MB → 92.5 MB):
+- `next.config.ts` is converted to a plain-JS `next.config.mjs` at build time
+  (the build fails if the conversion leaves TypeScript syntax behind). With no
+  TypeScript config to transpile at server start, the Next.js SWC native
+  compiler `@next/swc-linux-x64-musl` (~124 MB) is removed from the runtime tree.
+- Runtime uses Alpine's `nodejs` (LTS, v22.x — matches the `node:22-alpine`
+  builder and upstream's `engines` field) instead of `nodejs-current`, which is
+  v23.x in Alpine 3.22 (end-of-life).
 
 ## Why
 
@@ -76,10 +83,10 @@ Multi-stage Dockerfile:
    content-addressable store is rebuilt with prod-reachable packages only.
    `pnpm rebuild sqlite3 bcrypt sharp` puts the native `.node` binaries back.
 2. **Aggressive prune**: drop arch-specific binaries (keep musl-x64 only for
-   `next-swc`, `@swc/core`, `sharp/libvips`); strip `*.d.ts`, `*.map`, `*.md`,
+   `sharp/libvips`; `next-swc` and `@swc/core` are removed entirely); strip `*.d.ts`, `*.map`, `*.md`,
    `docs/`, `test/`, `examples/`, `CHANGELOG*`, ESM mirrors of CJS code, and
    the transitive devDeps listed above that pnpm refuses to drop on its own.
-3. **Runtime stage** (`alpine:3.22`): `apk add nodejs-current tzdata`, copy
+3. **Runtime stage** (`alpine:3.22`): `apk add nodejs tzdata`, copy
    only the runtime artifacts from the builder stage, drop privileges to
    `seerr` (UID 13001 / GID 13000 — homelab-wide PUID/PGID convention used by
    sonarr, radarr, jellyfin, etc.).
@@ -93,6 +100,9 @@ none of the build-time weight.
 ghcr.io/chefcai/seerr-alpine:latest
 ghcr.io/chefcai/seerr-alpine:<seerr-commit-sha>   # 12-char short SHA
 ```
+
+Builds dispatched from a non-`main` branch (`gh workflow run build.yml --ref <branch>`)
+publish only `:branch-<branch-name>`; `:latest` and the version tag are published from `main` only.
 
 ## Usage
 
