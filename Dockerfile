@@ -2,7 +2,7 @@
 #
 # Pattern mirrors chefcai/jellyfin-alpine and chefcai/ttyd-alpine:
 #   - Build happens in GitHub Actions, not on the deploying host.
-#   - Final image is alpine + nodejs-current + only the runtime artifacts
+#   - Final image is alpine + nodejs (LTS) + only the runtime artifacts
 #     needed by `node dist/index.js`.
 #
 # Baseline (upstream): ghcr.io/seerr-team/seerr:preview-new-oidc = 1.36 GB
@@ -133,8 +133,8 @@ RUN set -e; \
 #     settings UI. The server boots and runs without it; the page that needs it
 #     would 404 on the asset, not crash the process.
 #   - @swc/core-linux-x64-musl (60M): SWC compiler used by Next.js at build
-#     time. Runtime SSR uses precompiled bundles via @next/swc-linux-x64-musl
-#     (the 150M neighbor we keep), not @swc/core directly.
+#     time. Runtime SSR uses the precompiled .next bundles, not @swc/core.
+#     (@next/swc-linux-x64-musl is removed in iter 8 below.)
 #   - @formatjs/intl-displaynames@6.6.8 (31M): older duplicate; the newer
 #     6.8.13 is the version actually imported by seerr's i18n setup. The 6.6.8
 #     copy is only kept by pnpm to satisfy a peer-dep range from a transitive
@@ -146,10 +146,35 @@ RUN set -e; \
            @formatjs+intl-displaynames@6.6.8 ; \
     true
 
+# Iter 8: drop the Next.js SWC native compiler (@next/swc-linux-x64-musl,
+# ~124 MB) from the runtime tree.
+#
+# At runtime `next({ dev: false })` only needs SWC for one thing: transpiling
+# a TypeScript `next.config.ts` when the server boots. Everything else it
+# serves was compiled by `pnpm build` above. So we emit a plain-JS
+# `next.config.mjs` here (drop the type-only import and the `: NextConfig`
+# annotation), sanity-check it loads under Node, and ship that instead of the
+# .ts file. With no .ts config to transpile, SWC is never loaded.
+#
+# If upstream's next.config.ts grows real TypeScript syntax beyond the type
+# annotation, the grep guard below fails the build loudly rather than
+# shipping a broken config.
+RUN set -e; \
+    sed -e '/^import type /d' \
+        -e 's/const nextConfig: NextConfig =/const nextConfig =/' \
+        next.config.ts > next.config.mjs; \
+    if grep -nE 'NextConfig|: [A-Z][A-Za-z]+ =' next.config.mjs; then echo 'next.config.ts has TS syntax the sed transform does not handle' >&2; exit 1; fi; \
+    node -e "import('/build/next.config.mjs').then(m => { if (!m.default || !m.default.images) process.exit(1); console.log('next.config.mjs OK'); })"; \
+    cd node_modules/.pnpm; \
+    rm -rf @next+swc-linux-x64-musl@*
+
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM alpine:3.22
 
-# nodejs-current = v22.x in alpine 3.22 (matches the builder).
+# `nodejs` (LTS) = v22.x in alpine 3.22, matching the node:22-alpine builder
+# and upstream's engines field (node ^22.19). The previous `nodejs-current`
+# package is v23.x in 3.22 -- an odd-numbered, end-of-life Node release --
+# and was never the same major as the builder.
 # tzdata so TZ env behaves. PID 1 is provided by docker compose `init: true`.
 #
 # UID/GID 13001:13000 by default at build time (homelab-wide convention used
@@ -157,7 +182,7 @@ FROM alpine:3.22
 # PUID/PGID env vars, see entrypoint.sh and
 # https://github.com/chefcai/seerr-alpine/issues/1
 RUN apk add --no-cache \
-        nodejs-current \
+        nodejs \
         tzdata \
         su-exec \
     && addgroup -g 13000 seerr \
@@ -171,7 +196,7 @@ COPY --from=builder --chown=seerr:seerr /build/.next          ./.next
 COPY --from=builder --chown=seerr:seerr /build/public         ./public
 COPY --from=builder --chown=seerr:seerr /build/node_modules   ./node_modules
 COPY --from=builder --chown=seerr:seerr /build/package.json   ./package.json
-COPY --from=builder --chown=seerr:seerr /build/next.config.ts ./next.config.ts
+COPY --from=builder --chown=seerr:seerr /build/next.config.mjs ./next.config.mjs
 COPY --from=builder --chown=seerr:seerr /build/committag.json ./committag.json
 COPY --from=builder --chown=seerr:seerr /build/seerr-api.yml  ./seerr-api.yml
 
