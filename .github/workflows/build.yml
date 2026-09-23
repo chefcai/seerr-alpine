@@ -6,11 +6,21 @@ on:
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Rebuild even if this upstream commit is already published (picks up base-image/apk security fixes)'
+        type: boolean
+        default: false
   schedule:
     # Daily at 06:45 UTC (staggered 45 min after bazarr-alpine, 30 after
     # jellyfin-alpine, 15 after ttyd-alpine). Skips automatically if upstream
     # seerr commit is already published — see "Check if image already exists".
     - cron: '45 6 * * *'
+    # Periodic base refresh: monthly on the 1st at 07:15 UTC, forces a
+    # rebuild against the current alpine:3.22 base + apk index even when the
+    # upstream seerr commit hasn't changed, so security fixes aren't stuck
+    # behind an app release (HOMELAB-91 finding #2).
+    - cron: '15 7 1 * *'
 
 env:
   REGISTRY: ghcr.io
@@ -33,7 +43,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Determine if this run is the periodic base-refresh cron
+        id: base_refresh
+        run: |
+          # The second schedule entry (monthly, day-of-month 1) is the base
+          # refresh; the daily 06:45 entry is the normal version-check run.
+          # github.event.schedule carries the exact cron string that fired.
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "15 7 1 * *" ]; then
+            echo "is_base_refresh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_base_refresh=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Get seerr commit SHA from upstream tag
         id: seerr_version
@@ -63,17 +85,23 @@ jobs:
             -H "Accept: application/vnd.oci.image.index.v1+json" \
             -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
             "https://ghcr.io/v2/${{ github.repository }}/manifests/$VERSION")
-          if [ "$HTTP" = "200" ]; then
+          if [ "$HTTP" = "200" ] && [ "${{ steps.base_refresh.outputs.is_base_refresh }}" != "true" ] && [ "${{ inputs.force_rebuild }}" != "true" ]; then
             echo "needs_build=false" >> $GITHUB_OUTPUT
             echo "::notice::Upstream seerr commit $VERSION already published — skipping build."
           else
             echo "needs_build=true" >> $GITHUB_OUTPUT
-            echo "::notice::Upstream seerr commit $VERSION not yet published (HTTP $HTTP) — will build."
+            if [ "${{ steps.base_refresh.outputs.is_base_refresh }}" = "true" ]; then
+              echo "::notice::Monthly base-refresh run — rebuilding $VERSION against current alpine base regardless of publish state."
+            elif [ "${{ inputs.force_rebuild }}" = "true" ]; then
+              echo "::notice::force_rebuild requested — rebuilding $VERSION regardless of publish state."
+            else
+              echo "::notice::Upstream seerr commit $VERSION not yet published (HTTP $HTTP) — will build."
+            fi
           fi
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -82,7 +110,7 @@ jobs:
       - name: Extract metadata for Docker
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # Only the default branch publishes :latest and :<version>.
@@ -95,18 +123,50 @@ jobs:
 
       - name: Set up Docker Buildx
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      - name: Build and push Docker image
+      - name: Build image (load locally for smoke test)
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
+          load: true
           build-args: |
             SEERR_REF=${{ steps.seerr_version.outputs.full_sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test — boot container and check /api/v1/status
+        if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
+        run: |
+          set -e
+          IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          CID=$(docker run -d -p 5055:5055 "$IMAGE")
+          trap 'docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+
+          ok=false
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5055/api/v1/status || true)
+            if [ "$code" = "200" ]; then
+              ok=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ok" != "true" ]; then
+            echo "::error::/api/v1/status did not return 200 within 60s"
+            exit 1
+          fi
+          echo "Smoke test passed: /api/v1/status returned 200"
+
+      - name: Push image
+        if: (github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true') && github.event_name != 'pull_request'
+        run: |
+          for tag in $(echo "${{ steps.meta.outputs.tags }}"); do
+            docker push "$tag"
+          done
