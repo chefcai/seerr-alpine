@@ -116,10 +116,17 @@ jobs:
           # Only the default branch publishes :latest and :<version>.
           # Any other branch (workflow_dispatch --ref <branch>) publishes
           # :branch-<name> so test builds can never overwrite production tags.
+          # The sha= tag is unconditional so metadata-action always emits at
+          # least one valid tag -- the branch= rule only fires for `push`
+          # events, so a `pull_request`-triggered run (no push, no matching
+          # branch/default-branch tag) previously got an empty tag list and
+          # `docker run` on the smoke-test step failed with "invalid
+          # reference format" (2026-09-23).
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ steps.seerr_version.outputs.version }},enable={{is_default_branch}}
             type=ref,event=branch,prefix=branch-,enable=${{ github.ref_name != 'main' }}
+            type=sha,prefix=commit-,format=short
 
       - name: Set up Docker Buildx
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
@@ -144,7 +151,11 @@ jobs:
         if: github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true'
         run: |
           set -e
-          IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          # Use the unconditional commit-<sha> tag for the local smoke test --
+          # it is the only tag guaranteed to exist on every trigger type
+          # (pull_request runs get no latest/version/branch tag; see the
+          # metadata-action comment above).
+          IMAGE=$(echo "${{ steps.meta.outputs.tags }}" | grep 'commit-' | head -n1)
           CID=$(docker run -d -p 5055:5055 "$IMAGE")
           trap 'docker logs "$CID" || true; docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
 
@@ -167,6 +178,9 @@ jobs:
       - name: Push image
         if: (github.event_name != 'schedule' || steps.check.outputs.needs_build == 'true') && github.event_name != 'pull_request'
         run: |
-          for tag in $(echo "${{ steps.meta.outputs.tags }}"); do
+          # Skip the commit-<sha> tag -- it exists only so the smoke-test
+          # step always has a valid local image reference to boot; pushing
+          # it would leave an extra untracked tag in GHCR on every build.
+          for tag in $(echo "${{ steps.meta.outputs.tags }}" | grep -v 'commit-'); do
             docker push "$tag"
           done
