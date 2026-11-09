@@ -156,14 +156,19 @@ RUN set -e; \
 # annotation), sanity-check it loads under Node, and ship that instead of the
 # .ts file. With no .ts config to transpile, SWC is never loaded.
 #
+# Upstream renamed next.config.ts -> next.config.mjs (seerr-team/seerr#3615);
+# the transform now only runs if a .ts config is present.
 # If upstream's next.config.ts grows real TypeScript syntax beyond the type
 # annotation, the grep guard below fails the build loudly rather than
 # shipping a broken config.
 RUN set -e; \
-    sed -e '/^import type /d' \
-        -e 's/const nextConfig: NextConfig =/const nextConfig =/' \
-        next.config.ts > next.config.mjs; \
-    if grep -nE 'NextConfig|: [A-Z][A-Za-z]+ =' next.config.mjs; then echo 'next.config.ts has TS syntax the sed transform does not handle' >&2; exit 1; fi; \
+    if [ -f next.config.ts ]; then \
+        sed -e '/^import type /d' \
+            -e 's/const nextConfig: NextConfig =/const nextConfig =/' \
+            next.config.ts > next.config.mjs; \
+        if grep -nE 'NextConfig|: [A-Z][A-Za-z]+ =' next.config.mjs; then echo 'next.config.ts has TS syntax the sed transform does not handle' >&2; exit 1; fi; \
+    fi; \
+    test -f next.config.mjs; \
     node -e "import('/build/next.config.mjs').then(m => { if (!m.default || !m.default.images) process.exit(1); console.log('next.config.mjs OK'); })"; \
     cd node_modules/.pnpm; \
     rm -rf @next+swc-linux-x64-musl@*
